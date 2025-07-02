@@ -1,0 +1,324 @@
+import React, { useState, useEffect } from 'react';
+import { View, Modal, Text, TouchableOpacity, FlatList } from 'xxx';
+import styles from './EditPedidoModal.styles';
+import ClientSelectModal from './ClientSelectModal'; // Importa el modal ClientSelectModal
+import ProductModifModal from './ProductModifModal'; // Importa el modal ProductModifModal
+import Toast from 'xxx-toast-message';
+import AsyncStorage from '@xxx-async-storage/async-storage';
+import ipconfig from '../src/types/ipconfig';
+import { Picker } from '@xxx-picker/picker';
+
+interface EditPedidoModalProps {
+  visible: boolean;
+  onClose: () => void;
+  pedido: any;
+  detalles: any[];
+  onProductSelect: (product: any, quantity: number, price: number) => void;
+}
+
+const EditPedidoModal: React.FC<EditPedidoModalProps> = ({ visible, onClose, pedido, detalles, onProductSelect }) => {
+  const [editableDetalles, setEditableDetalles] = useState(detalles);
+  const [total, setTotal] = useState(0);
+  const [isClientModalVisible, setClientModalVisible] = useState(false);
+  const [isProductModalVisible, setProductModalVisible] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<string>('EFECTIVO');
+  const [selectedClient, setSelectedClient] = useState({
+    id: '',
+    razon: '',
+    codigo: '',
+  });
+
+  useEffect(() => {
+    if (visible) {
+      setEditableDetalles(detalles);
+    }
+  }, [visible, detalles]);
+
+  useEffect(() => {
+    const newTotal = editableDetalles.reduce((sum, item) => sum + item.cantped * item.precio, 0);
+    setTotal(parseFloat(newTotal.toFixed(2)));
+  }, [editableDetalles]);
+
+  const eliminarDetalle = (index: number) => {
+    const nuevosDetalles = editableDetalles.filter((_, i) => i !== index);
+    setEditableDetalles(nuevosDetalles);
+  };
+
+  const handleProductSelect = (product: any, quantity: number, price: number) => {
+    if (!product || quantity <= 0 || price <= 0) {
+      console.error('Datos del producto seleccionados son inválidos:', product, quantity, price);
+      return;
+    }
+
+    const productDescription = product.descrip || 'Sin descripción';
+
+    const newDetail = {
+      ...product,
+      cantped: quantity,
+      precio: price,
+      descrip: productDescription,
+    };
+
+    setEditableDetalles((prevDetalles) => [...prevDetalles, newDetail]);
+    setProductModalVisible(false);
+  };
+
+  const handleUpdatePedido = async () => {
+    if (!pedido || !selectedClient || !selectedClient.codigo) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Faltan datos del pedido o cliente',
+      });
+      return;
+    }
+
+    const codper = await AsyncStorage.getItem('codper');
+    if (!codper) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'No se encontró el código del personal',
+      });
+      return;
+    }
+
+    const medio = paymentMethod;
+
+    // Datos del pedido principal
+    const requestData = {
+      codcli: pedido.codcli,
+      total: parseFloat(total.toFixed(2)),
+      codper,
+      importe: parseFloat(total.toFixed(2)),
+      medio,
+      fechped: pedido.fechped.slice(0, 10),
+      sedarea: pedido.sedarea,
+      ordped: pedido.ordped,
+    };
+
+    try {
+      // Actualizar pedido principal
+      const pedidoResponse = await fetch(`http://${ipconfig.url}:3001/actpedidos`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestData),
+      });
+
+      const pedidoData = await pedidoResponse.json();
+
+      if (!pedidoResponse.ok) {
+        console.error("Error al actualizar el pedido principal:", pedidoData.error);
+        throw new Error(pedidoData.error);
+      }
+
+      console.log("Pedido principal actualizado correctamente:", pedidoData);
+
+      // Eliminar los detalles del pedido antes de insertar nuevos
+      const deleteResponse = await fetch(`http://${ipconfig.url}:3001/delpedidos`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ordped: `${pedido.fechped.slice(0, 4)}${pedido.sedarea}${pedido.ordped}` }),
+      });
+
+      const deleteData = await deleteResponse.json();
+
+      if (!deleteResponse.ok) {
+        console.error("Error al eliminar los detalles del pedido:", deleteData.error);
+        throw new Error(deleteData.error);
+      }
+
+      console.log("Detalles del pedido eliminados correctamente:", deleteData);
+
+      // Insertar detalles del pedido uno por uno
+      for (const [index, detalle] of editableDetalles.entries()) {
+        const itemCode = (index + 1).toString().padStart(3, '0'); // Código del ítem
+        const ordpedDetail = `${pedido.fechped.slice(0, 4)}${pedido.sedarea}${pedido.ordped}`;
+
+        const formattedCantped = parseFloat(detalle.cantped).toFixed(2); // Asegúrate de que esto sea un número
+        const formattedPrecio = parseFloat(detalle.precio).toFixed(2); // Asegúrate de que esto sea un 
+
+        const insertDetailData = {
+          item: itemCode,
+          codprod: detalle.codprod,
+          cantped: detalle.cantped,
+          precio: detalle.precio,
+          descrip: detalle.producto || 'Sin descripción',
+          ordped: ordpedDetail,
+        };
+
+        console.log(`Insertando detalle ${itemCode}:`, insertDetailData);
+
+        const detailResponse = await fetch(`http://${ipconfig.url}:3001/dpedidos`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ordped: ordpedDetail, // Asegúrate de que ordpedDetail no sea null o undefined
+            item: itemCode, // Verifica que este sea una cadena no vacía
+            codprod: detalle.codprod || '', // Si codprod es null/undefined, dale un valor por defecto
+            cantped: formattedCantped || '0.00', // Asegúrate de que este sea un número válido
+            precio: formattedPrecio || '0.00',
+            descrip: detalle.producto || 'Sin descripción',
+          }),
+        });
+
+        const detailData = await detailResponse.json();
+
+        if (!detailResponse.ok) {
+          console.error(`Error al insertar detalle del pedido: ${detailData.error}`);
+          throw new Error(`Producto: ${detalle.descrip}, Error: ${detailData.error}`);
+        }
+
+        console.log(`Detalle ${itemCode} insertado correctamente:`, detailData);
+      }
+
+      Toast.show({
+        type: 'success',
+        text1: 'Pedido actualizado',
+        text2: `Correlativo: ${pedido.ordped}`,
+      });
+      onClose();
+    } catch (error) {
+      console.error('Error al actualizar detalles del pedido:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'No se pudo actualizar todos los detalles del pedido',
+      });
+    }
+  };
+
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent={true}>
+      <View style={styles.modalContainer}>
+        <View style={styles.modalContent}>
+          <Text style={styles.title}>Modificar Pedido</Text>
+
+          {/* Picker para seleccionar el método de pago */}
+          <View style={styles.paymentMethodContainer}>
+            <Text style={styles.label}>Método de Pago:</Text>
+            <Picker
+              selectedValue={paymentMethod}
+              onValueChange={(itemValue) => setPaymentMethod(itemValue)}
+              style={styles.picker}
+            >
+              <Picker.Item label="EFECTIVO" value="EFECTIVO" />
+              <Picker.Item label="YAPE" value="YAPE" />
+              <Picker.Item label="PLIN" value="PLIN" />
+              <Picker.Item label="DEPOS." value="DEPOS." />
+              <Picker.Item label="TRANSF." value="TRANSF." />
+            </Picker>
+          </View>
+
+          {pedido && (
+            <View style={styles.pedidoInfo}>
+              <Text style={styles.infoText}>
+                <Text style={styles.label}>Fecha:</Text> {pedido.fechped.slice(0, 10)}
+              </Text>
+              <Text style={styles.infoText}>
+                <Text style={styles.label}>Serie:</Text> {pedido.sedarea}
+              </Text>
+              <Text style={styles.infoText}>
+                <Text style={styles.label}>Pedido:</Text> {pedido.ordped}
+              </Text>
+              <Text style={styles.infoText}>
+                <Text style={styles.label}>Cliente:</Text> {pedido.codcli}
+              </Text>
+              <Text style={styles.infoText}>
+                <Text style={styles.label}>Cliente Seleccionado:</Text> {selectedClient.codigo || 'Ningún cliente seleccionado'}
+              </Text>
+              <Text style={styles.infoText}>
+                <Text style={styles.label}>Total:</Text> S/ {total}
+              </Text>
+            </View>
+          )}
+
+          <Text style={styles.subtitle}>Detalles del Pedido:</Text>
+          <FlatList
+            data={editableDetalles}
+            keyExtractor={(item, index) => index.toString()}
+            renderItem={({ item, index }) => (
+              <View style={styles.detailCard}>
+                <View style={styles.detailRow}>
+                  <Text style={styles.label}>
+                    Producto: {item.descrip?.trim() ? item.descrip : 'Sin descripción'}
+                  </Text>
+                  <Text style={styles.cardText}>
+                    <Text style={styles.label}>Código:</Text> {item.codprod}
+                  </Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.cardText}>
+                    <Text style={styles.label}>Cantidad:</Text> {parseFloat(item.cantped).toFixed(2)}
+                  </Text>
+                  <Text style={styles.cardText}>
+                    <Text style={styles.label}>Precio:</Text> S/ {parseFloat(item.precio).toFixed(2)}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => eliminarDetalle(index)}
+                >
+                  <Text style={styles.deleteText}>Eliminar</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            contentContainerStyle={{ flexGrow: 1 }}
+            showsVerticalScrollIndicator={false}
+          />
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity
+              style={styles.button}
+              onPress={() => setClientModalVisible(true)} // Abre el modal de selección de cliente
+            >
+              <Text style={styles.buttonText}>Modificar Cliente</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.button}
+              onPress={() => setProductModalVisible(true)}
+            >
+              <Text style={styles.buttonText}>Agregar Producto</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.button}
+              onPress={handleUpdatePedido}
+            >
+              <Text style={styles.buttonText}>Actualizar Pedido</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+            <Text style={styles.closeText}>Cerrar</Text>
+          </TouchableOpacity>
+
+          {/* Mostrar modales de selección de cliente y producto */}
+          <ClientSelectModal
+            visible={isClientModalVisible}
+            onClose={() => setClientModalVisible(false)}
+            onSelectClient={(client) => {
+              setSelectedClient(client);
+              setClientModalVisible(false);
+            }}
+          />
+
+          {/* Modal para selección de productos */}
+          <ProductModifModal
+            visible={isProductModalVisible}
+            onClose={() => setProductModalVisible(false)}
+            onProductSelect={handleProductSelect}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+export default EditPedidoModal;

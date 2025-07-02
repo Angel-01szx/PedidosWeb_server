@@ -1,0 +1,418 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  Button,
+  FlatList,
+  Alert,
+  TouchableOpacity,
+  TextInput,
+} from 'xxx';
+import ProductSelectModal from './ProductSelectModal';
+import ClientSelectModal from './ClientSelectModal';
+import styles from './RegisterScreen.styles';
+import { Picker } from '@xxx-picker/picker';
+import Toast from 'xxx-toast-message';
+import ipconfig from '../ipconfig';
+
+interface Product {
+  codprod: string;
+  name: string;
+  quantity: string;
+  producto?: string;
+  precio: string;
+}
+
+
+export default function RegisterScreen() {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isModalVisible, setModalVisible] = useState(false);
+  const [isClientModalVisible, setClientModalVisible] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [quantity, setQuantity] = useState('');
+  const [precio, setPrecio] = useState('');
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [fetchedProducts, setFetchedProducts] = useState<Product[]>([]);
+  const [selectedRow, setSelectedRow] = useState<string | null>(null);
+  const [selectedDescription, setSelectedDescription] = useState<string>('');
+  const [correlativo, setCorrelativo] = useState<number>(0);
+  const [observacion, setObservacion] = useState('');
+  const [selectedSerie, setSelectedSerie] = useState<string>('');
+
+  const [selectedClient, setSelectedClient] = useState({
+    id: '',
+    razon: '',
+    codigo: '',
+  });
+
+  const handleObservacionChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setObservacion(event.target.value);
+  };
+
+  const fetchProducts = async () => {
+    try {
+      const response = await fetch(`http://${ipconfig.url}:3001/productos`);
+      if (!response.ok) {
+        throw new Error('Error al obtener productos');
+      }
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      console.error(error);
+      Toast.show({
+        type: 'success',                  // Tipo de Toast (success, error, info)
+        text1: 'Error',                   // Título del mensaje
+        text2: 'No se pudieron cargar los productos.', // Mensaje
+        position: 'top',                  // Posición en pantalla (top o bottom)
+      });
+      //Alert.alert('Error', 'No se pudieron cargar los productos.');
+      return [];
+    }
+  };
+
+  const fetchCorrelativo = async (serie: string) => {
+    const url = `http://${ipconfig.url}:3001/correlativo?serie=${serie}`;
+    console.log("URL de correlativo:", url);
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error('Error al obtener el correlativo');
+      }
+      const data = await response.json();
+      setCorrelativo(data.correlativo);
+    } catch (error: any) {
+      console.error("Error al obtener el correlativo:", error);
+      Toast.show({
+        type: 'success',                  // Tipo de Toast (success, error, info)
+        text1: 'Error',                   // Título del mensaje
+        text2: 'No se pudo obtener el correlativo.', // Mensaje
+        position: 'top',                  // Posición en pantalla (top o bottom)
+      });
+      //Alert.alert('Error', 'No se pudo obtener el correlativo.');
+      alert(`Ocurrió un error: ${error.message}`);
+    }
+  };
+
+  useEffect(() => {
+    const loadProducts = async () => {
+      const productsFromDB = await fetchProducts();
+      setFetchedProducts(productsFromDB);
+    };
+
+    loadProducts();
+  }, []);
+
+  useEffect(() => {
+    console.log("Serie seleccionada:", selectedSerie);
+    if (selectedSerie) {
+      fetchCorrelativo(selectedSerie);
+    }
+  }, [selectedSerie]);
+
+  const handleAddOrModifyProduct = () => {
+    if (!quantity || !selectedProduct) {
+      Toast.show({
+        type: 'success',                  // Tipo de Toast (success, error, info)
+        text1: 'Error',                   // Título del mensaje
+        text2: 'Por favor ingrese todos los campos.', // Mensaje
+        position: 'top',                  // Posición en pantalla (top o bottom)
+      });
+      //Alert.alert('Error', 'Por favor ingrese todos los campos.');
+      return;
+    }
+
+    if (isEditMode) {
+      setProducts((prevProducts) => {
+        const updatedProducts = prevProducts.map((product) =>
+          product.codprod === selectedProduct.codprod
+            ? { ...product, quantity, precio }
+            : product
+        );
+        console.log('Producto modificado:', { ...selectedProduct, quantity, precio });
+        return updatedProducts;
+      });
+    } else {
+      const newItem: Product = {
+        codprod: selectedProduct.codprod,
+        name: selectedProduct.name,
+        quantity,
+        precio,
+        producto: selectedProduct.producto || '',
+
+      };
+      //total : total + (Number(selectedProduct.precio) * Number(selectedProduct.quantity)),
+      setProducts((prevProducts) => {
+        console.log('Nuevo producto agregado:', newItem);
+        console.log('total: ${importeTotal.toFixed(2)}');
+        return [...prevProducts, newItem];
+      });
+    }
+
+    setModalVisible(false);
+    setSelectedProduct(null);
+    setQuantity('');
+    setPrecio(''),
+      setIsEditMode(false);
+  };
+
+  const handleDeleteProduct = (id: string) => {
+    setProducts((prevProducts) => prevProducts.filter((product) => product.codprod !== id));
+  };
+
+  const handleEditProduct = (product: Product) => {
+    setSelectedProduct(product);
+    setQuantity(product.quantity);
+    setPrecio(product.precio);
+    setIsEditMode(true);
+    setModalVisible(true);
+  };
+
+  const handleSelectRow = (item: Product) => {
+    setSelectedRow(item.codprod);
+    setSelectedDescription(item.producto || 'Descripción no disponible');
+  };
+
+  const resetForm = () => {
+    setProducts([]);
+    setSelectedClient({ id: '', razon: '', codigo: '' });
+    setCorrelativo(0);
+    setObservacion('');
+    setSelectedSerie('');
+    setImporteTotal(0);
+  };
+
+  const handleSaveToDatabase = async () => {
+    try {
+      // Enviar el encabezado del pedido a /pedidos
+      await fetchCorrelativo(selectedSerie);
+      const pedidoResponse = await fetch(`http://${ipconfig.url}:3001/pedidos`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fechped: currentDate,
+          fechoc: currentDate, // Reemplaza según sea necesario
+          fechentr: currentDate, // Define esta variable según la fecha de entrega
+          sedarea: selectedSerie,
+          ordped: correlativo.toString(),
+          codcli: selectedClient.codigo,
+          total: importeTotal,
+          importe: importeTotal, // Asegúrate de enviar el valor 
+          obs: observacion,
+        }),
+      });
+
+      if (!pedidoResponse.ok) {
+        throw new Error('Error al guardar el encabezado del pedido');
+      }
+
+      const pedidoData = await pedidoResponse.json();
+      const ordped = pedidoData.id; // Usa el ID si el servidor lo devuelve
+
+      // Guardar cada producto en la base de datos como un detalle de pedido en /dpedidos
+      for (let i = 0; i < products.length; i++) {
+        const product = products[i];
+        const itemNumber = (i + 1).toString().padStart(3, '0'); // Formato de 3 dígitos
+
+        // Imprimir en consola cada ítem
+        console.log(`item: ${itemNumber}`);
+        console.log(`descrip: ${product.producto || 'No disponible'}`);
+        console.log(`cantped: ${product.quantity}`);
+        console.log(`precio: ${product.precio}`);
+        console.log(`codprod: ${product.codprod}`);
+        console.log(`ordped: ${ordped}`);
+        console.log(''); // Línea en blanco para separar los logs
+
+        // Enviar cada detalle del pedido a /dpedidos
+        await fetch(`http://${ipconfig.url}:3001/dpedidos`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ordped: (currentDate.substring(0, 4) + selectedSerie + correlativo),
+            item: itemNumber,
+            codprod: product.codprod,
+            cantped: product.quantity,
+            precio: product.precio,
+            descrip: product.producto || 'No disponible',
+          }),
+        });
+      }
+      Toast.show({
+        type: 'success',
+        text1: 'Pedido guardado exitosamente',
+        text2: `Serie: ${selectedSerie}, Pedido: #${correlativo}`,
+        position: 'top',
+        visibilityTime: 5000,
+        autoHide: true,
+        topOffset: 50,
+        text1Style: {
+          fontSize: 20, // Tamaño de fuente grande para el mensaje principal
+          fontWeight: 'bold',
+          textAlign: 'center',
+        },
+        text2Style: {
+          fontSize: 18, // Tamaño de fuente grande para el mensaje secundario
+          textAlign: 'center',
+        },               // Posición en pantalla (top o bottom)
+      });
+
+      //Alert.alert('Éxito', 'Todos los pedidos guardados exitosamente.');
+      setProducts([]);
+      resetForm();
+
+    } catch (error) {
+      console.error(error);
+      Toast.show({
+        type: 'success',                  // Tipo de Toast (success, error, info)
+        text1: 'Error',                   // Título del mensaje
+        text2: 'No se pudo guardar los pedidos.', // Mensaje
+        position: 'top',                  // Posición en pantalla (top o bottom)
+      });
+      //Alert.alert('Error', 'No se pudo guardar los pedidos.');
+    }
+  };
+
+
+  const renderItem = ({ item }: { item: Product }) => (
+    <TouchableOpacity
+      style={[styles.productItem, selectedRow === item.codprod && styles.selectedRow]}
+      onPress={() => handleSelectRow(item)}
+    >
+      <Text style={styles.productName}>{item.name}</Text>
+      <Text style={styles.productDescription}>Descripción: {item.producto || 'No disponible'}</Text>
+      <Text style={styles.productQuantity}>Código: {item.codprod}</Text>
+      <Text style={styles.productQuantity}>Cantidad: {item.quantity}</Text>
+      <Text style={styles.productPrecio}>Precio: {item.precio}</Text>
+      <View style={styles.buttonsContainer}>
+        <TouchableOpacity
+          style={{ backgroundColor: 'black', padding: 10, borderRadius: 5, marginRight: 5 }}
+          onPress={() => handleEditProduct(item)}
+        >
+          <Text style={{ color: 'white', fontSize: 12 }}>Modificar</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={{ backgroundColor: 'red', padding: 10, borderRadius: 5 }}
+          onPress={() => handleDeleteProduct(item.codprod)}
+        >
+          <Text style={{ color: 'white', fontSize: 12 }}>Eliminar</Text>
+        </TouchableOpacity>
+      </View>
+    </TouchableOpacity>
+  );
+
+  const currentDate = new Date().toISOString().split('T')[0];
+
+  const calcularImporteTotal = () => {
+    return products.reduce((total, product) => {
+      const cantidad = parseFloat(product.quantity) || 0;
+      const precio = parseFloat(product.precio) || 0;
+      return total + cantidad * precio;
+    }, 0);
+  };
+
+  // Llama a la función y actualiza el importe cuando cambien los productos
+  useEffect(() => {
+    setImporteTotal(calcularImporteTotal());
+  }, [products]);
+
+  // Estado para el importe total
+  const [importeTotal, setImporteTotal] = useState(0);
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Registrar Pedido</Text>
+
+      <Text style={{ marginBottom: 10, fontSize: 10, textAlign: 'center' }}>Fecha: {currentDate}</Text>
+
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.subtitle}>Serie</Text>
+          <Picker
+            style={styles.picker}
+            selectedValue={selectedSerie}
+            onValueChange={(itemValue) => {
+              setSelectedSerie(itemValue);
+            }}
+          >
+            <Picker.Item label="001" value="001" />
+            <Picker.Item label="002" value="002" />
+          </Picker>
+        </View>
+
+        <View style={{ marginLeft: 10, width: 100 }}>
+          <Text style={styles.subtitle}>Número</Text>
+          <TextInput
+            style={styles.textInput}
+            value={correlativo.toString()}
+            editable={false}
+          />
+        </View>
+      </View>
+
+      <TouchableOpacity
+        style={styles.greenButton}
+        onPress={() => setModalVisible(true)}
+      >
+        <Text style={styles.buttonText}>Seleccionar Producto</Text>
+
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.greenButton}
+        onPress={() => setClientModalVisible(true)}
+      >
+        <Text style={styles.buttonText}>Seleccionar Cliente</Text>
+      </TouchableOpacity>
+
+      <Text style={styles.subtitle}>ID: {selectedClient.id}</Text>
+      <Text style={styles.subtitle}>Razón: {selectedClient.razon}</Text>
+      <Text style={styles.subtitle}>Código: {selectedClient.codigo}</Text>
+
+      <FlatList
+        data={products}
+        renderItem={renderItem}
+        keyExtractor={(item) => item.codprod}
+      />
+
+      <Text style={styles.importe}>Importe Total: S/. {importeTotal.toFixed(2)}</Text>
+
+      <ProductSelectModal
+        visible={isModalVisible}
+        products={fetchedProducts}
+        selectedProduct={selectedProduct}
+        setSelectedProduct={setSelectedProduct}
+        quantity={quantity}
+        setQuantity={setQuantity}
+        precio={precio}
+        setPrecio={setPrecio}
+        isEditMode={isEditMode}
+        handleAddOrModifyProduct={handleAddOrModifyProduct}
+        onClose={() => setModalVisible(false)}
+      />
+
+      <ClientSelectModal
+        visible={isClientModalVisible}
+        onSelectClient={(client) => {
+          setSelectedClient(client);
+          setClientModalVisible(false);
+        }}
+        onClose={() => setClientModalVisible(false)}
+      />
+
+      <TouchableOpacity style={styles.greenButton} onPress={handleSaveToDatabase}>
+        <Text style={styles.buttonText}>Guardar Pedido</Text>
+      </TouchableOpacity>
+
+      <TextInput
+        value={observacion}
+        onChangeText={setObservacion}
+        placeholder="Ingresa tu observación aquí"
+      />
+
+    </View>
+  );
+}
